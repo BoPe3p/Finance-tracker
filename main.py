@@ -1,5 +1,5 @@
 import numpy as np
-import clases
+from clases import Gasto, Inversion, Deposito, Saldo
 
 def main():
     print('Hola Rafael')
@@ -16,7 +16,7 @@ def main():
 
 def pedir_gasto():
 
-    categorias = ["1. Personal", "2. Inversion", "3. Deposito"]
+    categorias = ["Personal", "Inversion", "Deposito"]
     while True:
         (print("Indique la categoria de su flujo financiero:"))
         for i, categoria in enumerate(categorias):
@@ -25,21 +25,29 @@ def pedir_gasto():
         index = (input("Numero de categoria seleccionado: ")) - 1
 
         if index.isalpha():
-            if index in range(len(categorias)):
+            if int(index) in range(len(categorias)):
+                categoria = categorias[int(index)]
                 break
         else:
             print('Caracter invalido')
 
-    if categoria == 'personal':
+    if categoria == 'Personal':
         nombre_gasto = input("Nombre de su gasto:")
-        cantidad_gasto = float(input("Cantidad de su gasto:"))
+        cantidad_gasto = -1
+        while cantidad_gasto == -1:
+            try:
+                cantidad_gasto =float(input("Cantidad de su gasto:"))
+            except:
+                print('Gasto invalido')
+        nuevo_gasto = Gasto(nombre_gasto, categoria, cantidad_gasto)
 
     elif categoria == 'inversion':
-        pass
+        nombre_inversion = input("Nombre de su inversion:")
+        cantidad_invertida = float(input("Cantidad de su deposito:"))
 
     elif categoria == 'deposito':
-        nombre_gasto = input("Nombre de su deposito:")
-        cantidad_gasto = float(input("Cantidad de su deposito:"))
+        nombre_deposito = input("Nombre de su deposito:")
+        cantidad_depositada = float(input("Cantidad de su deposito:"))
 
 
 def gasto_a_file():
