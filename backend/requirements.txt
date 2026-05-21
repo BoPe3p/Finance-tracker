@@ -6,6 +6,5 @@ python-jose[cryptography]==3.3.0
 yfinance==0.2.50
 requests==2.32.3
 python-dotenv==1.0.1
-fintoc==2.21.0
 python-multipart==0.0.18
 passlib[bcrypt]==1.7.4

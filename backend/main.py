@@ -16,13 +16,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import models
 from database import engine, SessionLocal, seed_categories
-from routers import auth_router, accounts, transactions, categories, investments, fintoc_router, transfers
+from routers import auth_router, accounts, transactions, categories, investments, bank_router, transfers
 
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Finanzas Personales API",
-    description="Backend para la app de finanzas personales con Banco Security, Yahoo Finance y Fintual.",
+    description="Backend para la app de finanzas personales con open-banking-chile, Yahoo Finance y Fintual.",
     version="1.0.0",
 )
 
@@ -40,7 +40,7 @@ app.include_router(accounts.router)
 app.include_router(transactions.router)
 app.include_router(categories.router)
 app.include_router(investments.router)
-app.include_router(fintoc_router.router)
+app.include_router(bank_router.router)
 app.include_router(transfers.router)
 
 

@@ -1,44 +1,35 @@
 "use client";
 
-/**
- * Config: conectar Banco Security (Fintoc Widget), manejar cuentas y categorías.
- *
- * Fintoc Widget:
- * - Carga el script de Fintoc (cdn) dinámicamente
- * - Abre la ventana segura de Fintoc donde el usuario ingresa sus credenciales BANCARIAS
- * - Fintoc retorna un link_token → lo enviamos a nuestro backend Python
- * - El backend crea las cuentas y sincroniza movimientos
- * - NUNCA vemos las credenciales del banco
- */
-
-import { useEffect, useState } from "react";
-import { accounts, categories, fintoc, type Account, type Category } from "@/lib/api";
+import { useEffect, useState, useRef } from "react";
+import { accounts, categories, bank, type Account, type Category } from "@/lib/api";
 import { useAuth } from "@/components/providers";
 
-declare global {
-  interface Window {
-    // El script de Fintoc agrega este objeto al window global
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    Fintoc?: { create: (options: any) => { open: () => void } };
-  }
-}
-
-const FINTOC_PUBLIC_KEY = process.env.NEXT_PUBLIC_FINTOC_PUBLIC_KEY ?? "";
-
 type ActiveTab = "banco" | "cuentas" | "categorias";
+type BancoSubTab = "auto" | "csv";
 
 export default function ConfigPage() {
   const { token } = useAuth();
-  const [tab, setTab] = useState<ActiveTab>("banco");
-  const [accList, setAccList] = useState<Account[]>([]);
-  const [catList, setCatList] = useState<Category[]>([]);
+  const [tab, setTab]           = useState<ActiveTab>("banco");
+  const [bancoSub, setBancoSub] = useState<BancoSubTab>("auto");
+  const [accList, setAccList]   = useState<Account[]>([]);
+  const [catList, setCatList]   = useState<Category[]>([]);
+  const [supportedBanks, setSupportedBanks] = useState<{ id: string; name: string }[]>([]);
 
-  // Fintoc state
-  const [syncing, setSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState("");
-  const [fintocReady, setFintocReady] = useState(false);
+  // Sync automático (open-banking-chile)
+  const [syncForm, setSyncForm] = useState({ rut: "", password: "", bank_id: "" });
+  const [syncing, setSyncing]   = useState(false);
+  const [syncMsg, setSyncMsg]   = useState("");
+  const [syncOk, setSyncOk]     = useState(false);
 
-  // Account form
+  // Importación CSV (Banco Security)
+  const [csvAccountId, setCsvAccountId] = useState<number | "">("");
+  const [csvFile, setCsvFile]           = useState<File | null>(null);
+  const [csvLoading, setCsvLoading]     = useState(false);
+  const [csvMsg, setCsvMsg]             = useState("");
+  const [csvOk, setCsvOk]               = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Account / Category forms
   const [accForm, setAccForm] = useState({ name: "", type: "corriente", bank: "Banco Security", color: "#3b82f6" });
   const [catForm, setCatForm] = useState({ name: "", emoji: "" });
 
@@ -46,53 +37,51 @@ export default function ConfigPage() {
     if (!token) return;
     accounts.list().then(setAccList);
     categories.list().then(setCatList);
-    loadFintocScript();
+    bank.supported().then(setSupportedBanks);
   }, [token]);
 
-  function loadFintocScript() {
-    if (document.getElementById("fintoc-script")) { setFintocReady(true); return; }
-    const script = document.createElement("script");
-    script.id = "fintoc-script";
-    script.src = "https://js.fintoc.com/v1/";
-    script.onload = () => setFintocReady(true);
-    document.head.appendChild(script);
+  async function handleAutoSync(e: React.FormEvent) {
+    e.preventDefault();
+    if (!syncForm.bank_id) return;
+    setSyncing(true);
+    setSyncMsg("Abriendo Chrome y conectando con el banco...");
+    setSyncOk(false);
+    try {
+      const res = await bank.sync({
+        rut: syncForm.rut,
+        password: syncForm.password,
+        bank_id: syncForm.bank_id,
+      });
+      setSyncMsg(`${res.bank}: ${res.accounts_synced} cuenta(s) sincronizada(s), ${res.imported} movimientos importados.`);
+      setSyncOk(true);
+      setSyncForm(f => ({ ...f, password: "" }));  // limpia la clave inmediatamente
+      accounts.list().then(setAccList);
+    } catch (err: unknown) {
+      setSyncMsg(`Error: ${err instanceof Error ? err.message : "desconocido"}`);
+      setSyncOk(false);
+    } finally {
+      setSyncing(false);
+    }
   }
 
-  function openFintocWidget() {
-    if (!window.Fintoc) { setSyncMsg("Error: script de Fintoc no cargado. Recarga la página."); return; }
-    if (!FINTOC_PUBLIC_KEY) {
-      setSyncMsg("Agrega NEXT_PUBLIC_FINTOC_PUBLIC_KEY al archivo .env del frontend. Obtén tu clave en https://app.fintoc.com/");
-      return;
+  async function handleCsvImport(e: React.FormEvent) {
+    e.preventDefault();
+    if (!csvFile || csvAccountId === "") return;
+    setCsvLoading(true);
+    setCsvMsg("Procesando archivo...");
+    setCsvOk(false);
+    try {
+      const res = await bank.importCsv(Number(csvAccountId), csvFile);
+      setCsvMsg(`${res.imported} movimientos importados, ${res.skipped} duplicados omitidos.`);
+      setCsvOk(true);
+      setCsvFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch (err: unknown) {
+      setCsvMsg(`Error: ${err instanceof Error ? err.message : "desconocido"}`);
+      setCsvOk(false);
+    } finally {
+      setCsvLoading(false);
     }
-
-    const widget = window.Fintoc.create({
-      publicKey: FINTOC_PUBLIC_KEY,
-      product: "movements",
-      country: "cl",
-      institutionId: "cl_security",  // Banco Security
-      onSuccess: async (link: { token: string }) => {
-        setSyncing(true);
-        setSyncMsg("Conectando con Banco Security...");
-        try {
-          const res = await fintoc.connect(link.token) as { accounts: { id: number; name: string; status: string }[] };
-          setSyncMsg(`✓ ${res.accounts.length} cuenta(s) conectada(s). Sincronizando movimientos...`);
-
-          // Sincronizar cada cuenta
-          for (const acc of res.accounts) {
-            const syncRes = await fintoc.sync(link.token, String(acc.id));
-            const r = syncRes as { imported: number; skipped: number };
-            setSyncMsg(`✓ ${r.imported} movimientos importados (${r.skipped} duplicados omitidos).`);
-          }
-          accounts.list().then(setAccList);
-        } catch (err: unknown) {
-          setSyncMsg(`Error: ${err instanceof Error ? err.message : "desconocido"}`);
-        } finally {
-          setSyncing(false);
-        }
-      },
-      onExit: () => setSyncMsg(""),
-    });
-    widget.open();
   }
 
   async function handleCreateAccount(e: React.FormEvent) {
@@ -145,40 +134,136 @@ export default function ConfigPage() {
 
         {/* ── Banco ── */}
         {tab === "banco" && (
-          <div className="rounded-2xl p-6" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-            <h2 className="text-base font-semibold mb-2" style={{ color: "var(--text-primary)" }}>
-              Conectar Banco Security
-            </h2>
-            <p className="text-sm mb-5" style={{ color: "var(--text-muted)" }}>
-              Usa Fintoc para conectar tu banco de forma segura. Tus credenciales bancarias nunca pasan por esta app.
-            </p>
+          <div className="flex flex-col gap-4">
 
-            <div className="p-4 rounded-xl mb-5 text-sm" style={{ background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)", color: "var(--blue-light)" }}>
-              🔒 <strong>¿Cómo funciona Fintoc?</strong><br />
-              Al hacer clic en "Conectar", se abre una ventana segura de Fintoc (no nuestra app).
-              Ingresas tu RUT y clave de Banco Security allí. Fintoc nos entrega solo un "token" de acceso.
-              Si alguien roba nuestra base de datos, no puede entrar a tu banco.
+            {/* Sub-tabs */}
+            <div className="flex gap-2">
+              {([["auto", "🤖 Sync automático"], ["csv", "📄 Importar CSV (Banco Security)"]] as [BancoSubTab, string][]).map(([id, label]) => (
+                <button key={id} onClick={() => setBancoSub(id)}
+                  className="px-4 py-2 rounded-xl text-sm font-medium cursor-pointer transition-all"
+                  style={{
+                    background: bancoSub === id ? "var(--blue-glow)" : "var(--bg-card)",
+                    color: bancoSub === id ? "var(--blue-light)" : "var(--text-muted)",
+                    border: bancoSub === id ? "1px solid rgba(59,130,246,0.3)" : "1px solid var(--border)",
+                  }}>
+                  {label}
+                </button>
+              ))}
             </div>
 
-            <button onClick={openFintocWidget} disabled={syncing || !fintocReady}
-              className="px-6 py-3 rounded-xl text-sm font-semibold cursor-pointer flex items-center gap-2 transition-all"
-              style={{ background: "var(--blue-accent)", color: "#fff", opacity: (syncing || !fintocReady) ? 0.7 : 1 }}>
-              {syncing ? "Sincronizando..." : "🏦 Conectar Banco Security"}
-            </button>
+            {/* ── Sync automático ── */}
+            {bancoSub === "auto" && (
+              <div className="rounded-2xl p-6" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+                <h2 className="text-base font-semibold mb-1" style={{ color: "var(--text-primary)" }}>
+                  Sync automático
+                </h2>
+                <p className="text-sm mb-4" style={{ color: "var(--text-muted)" }}>
+                  Abre Chrome en segundo plano, inicia sesión en tu banco y descarga tus movimientos.
+                  <strong style={{ color: "var(--text-secondary)" }}> Tus credenciales nunca se guardan.</strong>
+                </p>
 
-            {syncMsg && (
-              <p className="mt-4 text-sm" style={{ color: syncMsg.startsWith("Error") ? "var(--red)" : "var(--green)" }}>
-                {syncMsg}
-              </p>
+                <div className="p-3 rounded-xl mb-4 text-xs" style={{ background: "rgba(59,130,246,0.07)", border: "1px solid rgba(59,130,246,0.15)", color: "var(--blue-light)" }}>
+                  Bancos disponibles: Santander, BCI, Itaú, BancoEstado, Scotiabank, Banco de Chile, BICE, Falabella, Edwards, Cencosud.
+                  <br />Banco Security: usa la pestaña "Importar CSV" mientras está pendiente la contribución al proyecto open-banking-chile.
+                </div>
+
+                <form onSubmit={handleAutoSync} className="flex flex-col gap-3">
+                  <select
+                    value={syncForm.bank_id}
+                    onChange={(e) => setSyncForm(f => ({ ...f, bank_id: e.target.value }))}
+                    style={inputStyle} required>
+                    <option value="">Selecciona tu banco...</option>
+                    {supportedBanks.map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                  <input
+                    value={syncForm.rut}
+                    onChange={(e) => setSyncForm(f => ({ ...f, rut: e.target.value }))}
+                    placeholder="RUT (ej: 12345678-9)"
+                    style={inputStyle} required />
+                  <input
+                    type="password"
+                    value={syncForm.password}
+                    onChange={(e) => setSyncForm(f => ({ ...f, password: e.target.value }))}
+                    placeholder="Clave del banco"
+                    style={inputStyle} required />
+                  <button type="submit" disabled={syncing}
+                    className="py-3 rounded-xl text-sm font-semibold cursor-pointer transition-all"
+                    style={{ background: "var(--blue-accent)", color: "#fff", opacity: syncing ? 0.7 : 1 }}>
+                    {syncing ? "Sincronizando (puede tardar ~30s)..." : "🔄 Sincronizar movimientos"}
+                  </button>
+                </form>
+
+                {syncMsg && (
+                  <p className="mt-3 text-sm" style={{ color: syncOk ? "var(--green)" : "var(--red)" }}>
+                    {syncOk ? "✓ " : "✗ "}{syncMsg}
+                  </p>
+                )}
+              </div>
             )}
 
-            <div className="mt-6 p-4 rounded-xl text-xs" style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-              <p className="font-semibold mb-1" style={{ color: "var(--text-secondary)" }}>Configuración requerida</p>
-              <p>1. Crea una cuenta en <strong>fintoc.com</strong> (gratis)</p>
-              <p>2. Obtén tu <code>Public Key</code> y <code>Secret Key</code></p>
-              <p>3. Agrega en <code>frontend/.env.local</code>: <code>NEXT_PUBLIC_FINTOC_PUBLIC_KEY=pk_live_...</code></p>
-              <p>4. Agrega en <code>backend/.env</code>: <code>FINTOC_SECRET_KEY=sk_live_...</code></p>
-            </div>
+            {/* ── CSV Banco Security ── */}
+            {bancoSub === "csv" && (
+              <div className="rounded-2xl p-6" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+                <h2 className="text-base font-semibold mb-1" style={{ color: "var(--text-primary)" }}>
+                  Importar CSV — Banco Security
+                </h2>
+                <p className="text-sm mb-4" style={{ color: "var(--text-muted)" }}>
+                  Banco Security aún no está en open-banking-chile. Mientras tanto, exporta tus movimientos manualmente.
+                </p>
+
+                <div className="p-4 rounded-xl mb-4 text-xs flex flex-col gap-1"
+                  style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
+                  <p className="font-semibold mb-1">Cómo exportar desde Banco Security:</p>
+                  <p>1. Inicia sesión en <strong>bancosecurity.cl</strong></p>
+                  <p>2. Ve a tu cuenta corriente → <strong>Movimientos</strong></p>
+                  <p>3. Filtra el rango de fechas que quieras</p>
+                  <p>4. Haz clic en <strong>Exportar → CSV</strong></p>
+                  <p>5. Sube ese archivo aquí</p>
+                </div>
+
+                <form onSubmit={handleCsvImport} className="flex flex-col gap-3">
+                  <select
+                    value={csvAccountId}
+                    onChange={(e) => setCsvAccountId(e.target.value ? Number(e.target.value) : "")}
+                    style={inputStyle} required>
+                    <option value="">Selecciona la cuenta destino...</option>
+                    {accList.map(a => (
+                      <option key={a.id} value={a.id}>{a.name} — {a.bank}</option>
+                    ))}
+                  </select>
+                  {accList.length === 0 && (
+                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                      Crea primero una cuenta en la pestaña "Cuentas".
+                    </p>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".csv,.txt"
+                    onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)}
+                    style={{ ...inputStyle, cursor: "pointer" }}
+                    required />
+                  <button type="submit" disabled={csvLoading || !csvFile || csvAccountId === ""}
+                    className="py-3 rounded-xl text-sm font-semibold cursor-pointer transition-all"
+                    style={{ background: "var(--blue-accent)", color: "#fff", opacity: (csvLoading || !csvFile || csvAccountId === "") ? 0.7 : 1 }}>
+                    {csvLoading ? "Importando..." : "📤 Importar movimientos"}
+                  </button>
+                </form>
+
+                {csvMsg && (
+                  <p className="mt-3 text-sm" style={{ color: csvOk ? "var(--green)" : "var(--red)" }}>
+                    {csvOk ? "✓ " : "✗ "}{csvMsg}
+                  </p>
+                )}
+
+                <div className="mt-5 p-3 rounded-xl text-xs" style={{ background: "rgba(59,130,246,0.07)", border: "1px solid rgba(59,130,246,0.15)", color: "var(--blue-light)" }}>
+                  ¿Quieres que Banco Security sea automático? Contribuye el scraper al proyecto open source:<br />
+                  <strong>github.com/kaihv/open-banking-chile</strong> — ver CONTRIBUTING.md
+                </div>
+              </div>
+            )}
           </div>
         )}
 

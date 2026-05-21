@@ -81,12 +81,11 @@ export type Account = {
   bank: string;
   balance: number;
   color: string;
-  fintoc_link_id: string | null;
 };
 
 export const accounts = {
   list: () => request<Account[]>("/accounts/"),
-  create: (data: Omit<Account, "id" | "fintoc_link_id">) =>
+  create: (data: Omit<Account, "id">) =>
     request("/accounts/", { method: "POST", body: JSON.stringify(data) }),
   delete: (id: number) => request(`/accounts/${id}`, { method: "DELETE" }),
   summary: (id: number) => request<AccountSummary>(`/accounts/${id}/summary`),
@@ -177,16 +176,44 @@ export const investments = {
   delete: (id: number) => request(`/investments/${id}`, { method: "DELETE" }),
 };
 
-// ─── Fintoc ───────────────────────────────────────────────────────────────────
+// ─── Bank (open-banking-chile) ────────────────────────────────────────────────
 
-export const fintoc = {
-  connect: (link_token: string) =>
-    request("/fintoc/connect", { method: "POST", body: JSON.stringify({ link_token }) }),
-  sync: (link_token: string, account_fintoc_id: string) =>
-    request<{ imported: number; skipped: number; bank: string }>("/fintoc/sync", {
+export type BankSyncResult = {
+  accounts_synced: number;
+  imported: number;
+  skipped: number;
+  bank: string;
+};
+
+export const bank = {
+  supported: () => request<{ id: string; name: string }[]>("/bank/supported"),
+
+  sync: (data: { rut: string; password: string; bank_id: string; days_back?: number }) =>
+    request<BankSyncResult>("/bank/sync", {
       method: "POST",
-      body: JSON.stringify({ link_token, account_fintoc_id }),
+      body: JSON.stringify(data),
     }),
+
+  importCsv: async (account_id: number, file: File): Promise<BankSyncResult> => {
+    const token = getToken();
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(`${BASE}/bank/import-csv?account_id=${account_id}`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    if (res.status === 401) {
+      sessionStorage.removeItem("auth_token");
+      window.location.href = "/login";
+      throw new Error("Sesión expirada");
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || "Error desconocido");
+    }
+    return res.json() as Promise<BankSyncResult>;
+  },
 };
 
 // ─── Transfers ────────────────────────────────────────────────────────────────
