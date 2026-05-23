@@ -6,40 +6,23 @@ App de finanzas personales con Banco Security, inversiones y dark mode azul.
 
 - Python 3.11+
 - Node.js 18+
-- Cuenta en [fintoc.com](https://app.fintoc.com/) (gratis) para conectar el banco
+- Google Chrome (para el sync automático de bancos)
 
 ## Primera vez
 
-### 1. Configurar variables de entorno
-
-```bash
-cp backend/.env.example backend/.env
-cp frontend/.env.local.example frontend/.env.local
-```
-
-Edita `backend/.env` y agrega tu clave de Fintoc:
-```
-FINTOC_SECRET_KEY=sk_live_XXXXXXXXXXXXXXXX
-```
-
-Edita `frontend/.env.local` y agrega tu clave pública de Fintoc:
-```
-NEXT_PUBLIC_FINTOC_PUBLIC_KEY=pk_live_XXXXXXXXXXXXXXXX
-```
-
-### 2. Instalar dependencias
+### 1. Instalar dependencias
 
 ```bash
 # Backend Python
 cd backend
 pip install -r requirements.txt
 
-# Frontend
+# Frontend (Next.js + open-banking-chile)
 cd ../frontend
 npm install
 ```
 
-## Levantar la app
+### 2. Levantar la app
 
 Necesitas **dos terminales** abiertas al mismo tiempo:
 
@@ -60,9 +43,28 @@ Abre [http://localhost:3000](http://localhost:3000)
 ## Primera sesión
 
 1. Crea tu **contraseña maestra** (protege todos tus datos)
-2. Ve a **Config → Conectar banco** y conecta Banco Security con el Widget de Fintoc
+2. Ve a **Config → Conectar banco** y sincroniza tus movimientos:
+   - **Santander, BCI, Itaú, BancoEstado, y otros:** usa "Sync automático" — ingresa RUT y clave, Chrome se abre en segundo plano
+   - **Banco Security:** usa "Importar CSV" — descarga el CSV desde bancosecurity.cl y súbelo aquí
 3. Agrega tus inversiones en la tab **Inversiones** (ticker + fecha + precio de compra)
-4. La app sincroniza tus transacciones y las categoriza automáticamente
+4. La app categoriza las transacciones automáticamente
+
+## Bancos soportados (sync automático)
+
+| Banco | ID |
+|-------|----|
+| Banco Falabella | `falabella` |
+| Banco BICE | `bice` |
+| Santander | `santander` |
+| Banco Edwards | `edwards` |
+| Scotiabank | `scotiabank` |
+| Banco de Chile | `bchile` |
+| BCI | `bci` |
+| Itaú | `itau` |
+| BancoEstado | `bestado` |
+| Tarjeta Cencosud | `cencosud` |
+
+> **Banco Security** no está aún en la librería. Se puede importar el CSV manualmente desde la web del banco. La contribución del scraper al proyecto [open-banking-chile](https://github.com/kaihv/open-banking-chile) está pendiente.
 
 ## Tabs
 
@@ -73,15 +75,24 @@ Abre [http://localhost:3000](http://localhost:3000)
 | Cuentas | Saldo por cuenta y movimientos recientes |
 | Inversiones | Portafolio, rendimiento, gráfico histórico (Yahoo Finance + Fintual) |
 | Transferir | Preparar transferencias y abrir Banco Security |
-| Config | Conectar banco, manejar cuentas y categorías |
+| Config | Sincronizar banco, manejar cuentas y categorías |
 
 ## Seguridad
 
 - La **contraseña maestra** se guarda como hash irreversible en `~/.finanzas_config` — nunca en texto plano
 - La **sesión expira a los 30 minutos** de inactividad
-- Tus **credenciales bancarias nunca pasan por esta app** — Fintoc las maneja en su propia ventana segura
-- La **base de datos y el `.env` están en `.gitignore`** — nunca se suben a GitHub
+- Las **credenciales bancarias nunca se guardan** — se usan solo durante el scraping y se descartan inmediatamente
+- El scraping corre **100% local** en tu máquina con Chrome — ningún dato sale al exterior
+- La **base de datos está en `.gitignore`** — nunca se sube a GitHub
 - El backend solo acepta conexiones desde `localhost:3000`
+
+## Cómo exportar CSV desde Banco Security
+
+1. Inicia sesión en [bancosecurity.cl](https://www.bancosecurity.cl)
+2. Selecciona tu cuenta → **Movimientos**
+3. Filtra el rango de fechas que quieras
+4. Haz clic en **Exportar → CSV**
+5. Ve a **Config → Conectar banco → Importar CSV** y sube el archivo
 
 ## Documentación de la API
 
